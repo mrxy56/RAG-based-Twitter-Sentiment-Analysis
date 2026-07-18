@@ -54,8 +54,6 @@ IBM_NLU_APIKEY = "YOUR_IBM_API_KEY"
 IBM_NLU_URL = "YOUR_IBM_SERVICE_URL"
 ```
 
-Do not upload real API keys to GitHub.
-
 ## Example
 
 ```python
