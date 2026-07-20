@@ -1,26 +1,23 @@
-# Twitter Sentiment RAG
+# RAG-based Twitter Sentiment Analysis
 
-A simple Twitter sentiment analysis and question-answering project using IBM Watson NLU, sentence embeddings, ChromaDB, and RAG.
+A Flask and React application for Twitter sentiment analysis and RAG question answering.
 
 ## Features
 
-- Search recent tweets with the X API
-- Analyze sentiment as positive, neutral, or negative
+- Retrieve recent tweets with the X API
+- Rank tweets with BM25
+- Classify sentiment as positive, neutral, or negative
 - Store tweet embeddings in ChromaDB
 - Retrieve relevant tweets with semantic search
-- Answer questions based on retrieved tweets
-- Evaluate sentiment classification and retrieval quality
+- Answer questions using retrieved tweets
+- Evaluate predictions with Accuracy, Precision, Recall, and a Confusion Matrix
+- Export results as CSV
 
-## Technologies
+## Models
 
-- Python
-- Google Colab
-- X API
-- IBM Watson NLU
-- Sentence Transformers
-- ChromaDB
-- Qwen
-- NLTK
+- Sentiment: `cardiffnlp/twitter-roberta-base-sentiment-latest`
+- Embeddings: `sentence-transformers/all-MiniLM-L6-v2`
+- Generation: `google/flan-t5-small`
 
 ## Workflow
 
@@ -29,65 +26,77 @@ X API
   ↓
 Tweet preprocessing
   ↓
-Sentiment analysis
+Twitter-RoBERTa sentiment analysis
   ↓
-Sentence embeddings
+BM25 ranking
   ↓
-ChromaDB
-  ↓
-Semantic retrieval
-  ↓
-RAG question answering
+React interface
+  ├── Manual evaluation
+  └── RAG QA
+        ↓
+     MiniLM embeddings
+        ↓
+     ChromaDB retrieval
+        ↓
+     FLAN-T5 answer
+```
+
+## Project Structure
+
+```text
+RAG-based-Twitter-Sentiment-Analysis/
+├── backend/
+│   ├── app.py
+│   ├── requirements.txt
+│   ├── .env
+│   ├── .env.example
+│   ├── templates/index.html
+│   └── static/
+│       ├── app.jsx
+│       └── styles.css
+├── .gitignore
+└── README.md
 ```
 
 ## Installation
 
-```python
-!pip install -q requests nltk ibm-watson chromadb sentence-transformers transformers accelerate
+```bash
+cd backend
+python -m pip install -r requirements.txt
 ```
 
-## API Keys
+Create `backend/.env`:
 
-```python
-X_BEARER_TOKEN = "YOUR_X_BEARER_TOKEN"
-IBM_NLU_APIKEY = "YOUR_IBM_API_KEY"
-IBM_NLU_URL = "YOUR_IBM_SERVICE_URL"
+```env
+X_BEARER_TOKEN=YOUR_X_BEARER_TOKEN
+HF_TOKAN=YOUR_HF_TOKEN
 ```
 
-## Example
+## Run
 
-```python
-query = "Tesla"
-
-raw_tweets = search_tweets(query, max_results=10)
-tweets = analyze_tweets(raw_tweets)
-
-store_tweets(
-    tweets=tweets,
-    topic=query
-)
-
-result = answer_question(
-    question="What are the main complaints in these tweets?",
-    top_k=5,
-    topic=query
-)
-
-print(result["answer"])
+```bash
+cd backend
+python app.py
 ```
 
-## Evaluation
+Open:
 
-Sentiment evaluation includes:
+```text
+http://127.0.0.1:5001
+```
 
-- Accuracy
-- Precision
-- Recall
-- F1-score
-- Confusion Matrix
+## Main API Endpoints
 
-Retrieval evaluation includes:
+- `POST /api/analyze` — retrieve, classify, and rank tweets
+- `POST /api/qa` — answer questions from retrieved tweets
+- `POST /api/evaluate` — calculate sentiment evaluation metrics
 
-- Precision@K
-- Recall@K
-- MRR
+## Model Size
+
+Approximate model weights:
+
+| Model | Size |
+|---|---:|
+| Twitter-RoBERTa | 500 MB |
+| MiniLM | 90 MB |
+| FLAN-T5-small | 300 MB |
