@@ -1,0 +1,17 @@
+.token-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: apx soli #e5e7eb;
+    background: #fff;
+    margin-right: 8px;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+}
+
+.cm-table th, .cm-table td {
+    text-align: center;
+    vertical-align: middle;
+}
