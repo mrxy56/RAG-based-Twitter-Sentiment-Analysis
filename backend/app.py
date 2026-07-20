@@ -6,23 +6,24 @@ from collections import Counter
  
 import nltk
 import requests
+import torch
+import chromadb
+
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from nltk.corpus import stopwords
 from nltk.metrics import ConfusionMatrix
 from nltk.tokenize import word_tokenize
- 
-import torch
-import chromadb
-
+from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 
-from rank_bm25 import BM25Okapi
+
  
 load_dotenv()
  
 X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "").strip()
+X_BASE = "https://api.twitter.com/2"
  
 app = Flask(__name__)
 
@@ -62,32 +63,38 @@ def ensure_nltk():
         nltk.download("punkt_tab")
  
 ensure_nltk()
-
 EN_STOP = set(stopwords.words("english"))
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+")
 MENTION_RE = re.compile(r"@\w+")
 HASHTAG_RE = re.compile(r"#(\w+)")
 WS_RE = re.compile(r"\s+")
- 
-def clean_text(s):
-    s = s or ""
-    s = URL_RE.sub(" ", s)
-    s = MENTION_RE.sub(" ", s)
-    s = HASHTAG_RE.sub(r"\1", s) 
-    s = WS_RE.sub(" ", s).strip()
-    return s
- 
-def tokens_from_text(s):
-    s = clean_text(s).lower()
-    toks = word_tokenize(s)
-    return [t for t in toks if t.isalpha() and t not in EN_STOP and len(t) > 2]
 
-def preprocess_tweet(text):
+def clean_text(text):
+    text = text or ""
+    text = URL_RE.sub("", text)
+    text = MENTION_RE.sub("", text)
+    text = HASHTAG_RE.sub(r"\1", text)
+    return WS_RE.sub(" ", text).strip()
+
+
+def tokenize(text):
+    words = word_tokenize(clean_text(text).lower())
+
+    return [
+        word
+        for word in words
+        if word.isalpha()
+        and word not in EN_STOP
+        and len(word) > 2
+    ]
+
+
+def preprocess_sentiment(text):
     words = []
 
-    for word in text.split():
-        if word.startswith("@") and len(word) > 1:
+    for word in (text or "").split():
+        if word.startswith("@"):
             word = "@user"
         elif word.startswith("http"):
             word = "http"
@@ -96,76 +103,87 @@ def preprocess_tweet(text):
 
     return " ".join(words)
 
-def analyze_sentiments(tweets):
-    valid_tweets = []
-    texts = []
-
-    for tweet in tweets:
-        text = (tweet.get("text") or "").strip()
-
-        if text:
-            valid_tweets.append(tweet)
-            texts.append(preprocess_tweet(text))
-
+def predict_sentiments(texts):
     if not texts:
-        return tweets
+        return []
+
+    prepared = [
+        preprocess_sentiment(text)
+        for text in texts
+    ]
 
     results = sentiment_model(
-        texts,
+        prepared,
         truncation=True,
         max_length=512,
         batch_size=8
     )
 
-    for tweet, result in zip(valid_tweets, results):
-        tweet["label"] = result["label"].lower()
-        tweet["score"] = float(result["score"])
-
-    return tweets
+    return [
+        {
+            "label": result["label"].lower(),
+            "score": float(result["score"])
+        }
+        for result in results
+    ]
  
  
-X_BASE = "https://api.twitter.com/2"
- 
-def x_search_recent(query, max_results=10, lang="en"):
+def search_recent_tweets(query, max_results=10, lang="en"):
     if not X_BEARER_TOKEN:
-        raise RuntimeError("Missing X_BEARER_TOKEN in backend/.env")
- 
-    headers = {"Authorization": f"Bearer {X_BEARER_TOKEN}"}
-    q = (query or "").strip()
-    if not q:
+        raise RuntimeError("Missing X_BEARER_TOKEN in .env")
+
+    query = query.strip()
+
+    if not query:
         return []
- 
+
+    search_query = f"({query}) -is:retweet"
+
     if lang:
-        q = f"({q}) lang:{lang} -is:retweet"
-    else:
-        q = f"({q}) -is:retweet"
- 
-    params = {
-        "query": q,
-        "max_results": max(10, min(int(max_results), 20)),
-        "tweet.fields": "created_at,lang,public_metrics",
-    }
- 
-    r = requests.get(f"{X_BASE}/tweets/search/recent", headers=headers, params=params, timeout=25)
-    if r.status_code >= 400:
-        try:
-            detail = r.json()
-        except Exception:
-            detail = r.text
-        raise RuntimeError(f"X API error {r.status_code}: {detail}")
- 
-    data = r.json()
-    return data.get("data", []) or []
+        search_query += f" lang:{lang}"
+
+    response = requests.get(
+        f"{X_BASE}/tweets/search/recent",
+        headers={
+            "Authorization": f"Bearer {X_BEARER_TOKEN}"
+        },
+        params={
+            "query": search_query,
+            "max_results": max(10, min(int(max_results), 20)),
+            "tweet.fields": "created_at,lang,public_metrics"
+        },
+        timeout=25
+    )
+
+    if not response.ok:
+        raise RuntimeError(
+            f"X API error {response.status_code}: "
+            f"{response.text}"
+        )
+
+    return response.json().get("data", [])
  
 def summarize(items):
-    n = len(items)
-    if n == 0:
-        return {"n": 0, "positive": 0, "negative": 0, "neutral": 0, "avg_score": 0.0}
-    pos = sum(1 for x in items if x["label"] == "positive")
-    neg = sum(1 for x in items if x["label"] == "negative")
-    neu = n - pos - neg
-    avg = sum(float(x["score"]) for x in items) / n
-    return {"n": n, "positive": pos, "negative": neg, "neutral": neu, "avg_score": avg}
+    counts = Counter(
+        item["label"]
+        for item in items
+    )
+
+    scores = [
+        float(item["score"])
+        for item in items
+    ]
+
+    return {
+        "n": len(items),
+        "positive": counts["positive"],
+        "negative": counts["negative"],
+        "neutral": counts["neutral"],
+        "avg_score": (
+            sum(scores) / len(scores)
+            if scores else 0.0
+        )
+    }
  
 @app.get("/")
 def home():
@@ -173,61 +191,92 @@ def home():
  
 @app.post("/api/analyze")
 def api_analyze():
-    body = request.get_json()
+    body = request.get_json(silent=True) or {}
+
     query = (body.get("query") or "").strip()
-    n = int(body.get("n"))      
     lang = (body.get("lang") or "en").strip()
- 
+    n = max(10, min(int(body.get("n", 10)), 20))
+
     if not query:
-        return jsonify({"error": "query is required"}), 400
- 
-    n = max(5, min(n, 20))
- 
+        return jsonify({
+            "error": "query is required"
+        }), 400
+
     try:
-        tweets = x_search_recent(query, max_results=n, lang=lang)
-        token_counter = Counter()
+        tweets = search_recent_tweets(
+            query,
+            max_results=n,
+            lang=lang
+        )
+
+        texts = [
+            tweet.get("text", "")
+            for tweet in tweets
+        ]
+
+        sentiments = predict_sentiments(texts)
+
         items = []
         corpus_tokens = []
- 
-        for t in tweets:
-            raw = t.get("text", "")
-            cleaned = clean_text(raw)
-            toks = tokens_from_text(raw)
-            token_counter.update(toks)
-            corpus_tokens.append(toks)
- 
-            s = analyze_sentiments(cleaned)
+        token_counter = Counter()
+
+        for tweet, sentiment in zip(
+            tweets,
+            sentiments
+        ):
+            text = tweet.get("text", "")
+            tokens = tokenize(text)
+
+            corpus_tokens.append(tokens)
+            token_counter.update(tokens)
+
             items.append({
-                "id": t.get("id"),
-                "created_at": t.get("created_at"),
-                "lang": t.get("lang"),
-                "text": raw,
-                "cleaned": cleaned,
-                "label": s["label"],
-                "score": s["score"],
+                "id": tweet.get("id"),
+                "created_at": tweet.get("created_at"),
+                "lang": tweet.get("lang"),
+                "text": text,
+                "cleaned": clean_text(text),
+                "label": sentiment["label"],
+                "score": sentiment["score"]
             })
 
-        q_tokens = tokens_from_text(query)
-        if corpus_tokens and q_tokens:
+        query_tokens = tokenize(query)
+
+        if corpus_tokens and query_tokens:
             bm25 = BM25Okapi(corpus_tokens)
-            scores = bm25.get_scores(q_tokens)
+            scores = bm25.get_scores(query_tokens)
+
             for item, score in zip(items, scores):
                 item["bm25_score"] = float(score)
-            items.sort(key=lambda x: x.get("bm25_score", 0.0), reverse=True)
         else:
             for item in items:
                 item["bm25_score"] = 0.0
- 
-        top_tokens = [{"token": w, "count": c} for w, c in token_counter.most_common(10)]
- 
+
+        items.sort(
+            key=lambda item: item["bm25_score"],
+            reverse=True
+        )
+
+        top_tokens = [
+            {
+                "token": token,
+                "count": count
+            }
+            for token, count
+            in token_counter.most_common(10)
+        ]
+
         return jsonify({
             "query": query,
             "summary": summarize(items),
             "top_tokens": top_tokens,
             "items": items
         })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+    except Exception as exc:
+        return jsonify({
+            "error": str(exc)
+        }), 500
     
 def precision_recall_from_matrix(labels, matrix):
     k = len(labels)
