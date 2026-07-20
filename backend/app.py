@@ -196,7 +196,7 @@ def api_analyze():
             token_counter.update(toks)
             corpus_tokens.append(toks)
  
-            s = watson_sentiment(cleaned)
+            s = analyze_sentiments(cleaned)
             items.append({
                 "id": t.get("id"),
                 "created_at": t.get("created_at"),
@@ -293,6 +293,114 @@ def api_evaluate():
         "accuracy": acc,
         "precision_recall": pr
     })
+
+@app.post("/api/qa")
+def api_qa():
+    body = request.get_json(silent=True) or {}
+
+    question = (body.get("question") or "").strip()
+    tweets = body.get("tweets") or []
+
+    if not question:
+        return jsonify({
+            "error": "Question is required"
+        }), 400
+
+    documents = [
+        (tweet.get("text") or "").strip()
+        for tweet in tweets
+        if (tweet.get("text") or "").strip()
+    ]
+
+    if not documents:
+        return jsonify({
+            "error": "No tweets available. Run Analyze first."
+        }), 400
+
+    try:
+        collection_name = "tweet_qa"
+
+        try:
+            chroma_client.delete_collection(collection_name)
+        except Exception:
+            pass
+
+        collection = chroma_client.create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"}
+        )
+
+        tweet_embeddings = embedding_model.encode(
+            documents,
+            normalize_embeddings=True
+        ).tolist()
+
+        collection.add(
+            ids=[str(i) for i in range(len(documents))],
+            documents=documents,
+            embeddings=tweet_embeddings
+        )
+
+        question_embedding = embedding_model.encode(
+            [question],
+            normalize_embeddings=True
+        ).tolist()
+
+        result = collection.query(
+            query_embeddings=question_embedding,
+            n_results=min(3, len(documents)),
+            include=["documents", "distances"]
+        )
+
+        retrieved = result["documents"][0]
+        distances = result["distances"][0]
+
+        context = "\n\n".join(
+            f"Tweet {i + 1}: {text}"
+            for i, text in enumerate(retrieved)
+        )
+
+        prompt = f"""
+Answer the question using only the retrieved tweets.
+
+If the tweets do not provide enough information, say:
+The retrieved tweets do not provide enough information.
+
+Retrieved tweets:
+{context}
+
+Question:
+{question}
+
+Answer:
+""".strip()
+
+        output = qa_generator(
+            prompt,
+            max_new_tokens=100,
+            do_sample=False
+        )
+
+        sources = [
+            {
+                "text": text,
+                "similarity": max(
+                    0.0,
+                    1.0 - float(distance)
+                )
+            }
+            for text, distance in zip(retrieved, distances)
+        ]
+
+        return jsonify({
+            "answer": output[0]["generated_text"].strip(),
+            "sources": sources
+        })
+
+    except Exception as exc:
+        return jsonify({
+            "error": str(exc)
+        }), 500
  
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
