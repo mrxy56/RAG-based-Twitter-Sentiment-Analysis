@@ -12,12 +12,12 @@ from nltk.corpus import stopwords
 from nltk.metrics import ConfusionMatrix
 from nltk.tokenize import word_tokenize
  
-from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
-from ibm_watson.natural_language_understanding_v1 import (
-    Features,
-    NaturalLanguageUnderstandingV1,
-    SentimentOptions,
-)
+import torch
+import chromadb
+
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+
 from rank_bm25 import BM25Okapi
  
 load_dotenv()
