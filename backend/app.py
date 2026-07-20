@@ -82,6 +82,46 @@ def tokens_from_text(s):
     s = clean_text(s).lower()
     toks = word_tokenize(s)
     return [t for t in toks if t.isalpha() and t not in EN_STOP and len(t) > 2]
+
+def preprocess_tweet(text):
+    words = []
+
+    for word in text.split():
+        if word.startswith("@") and len(word) > 1:
+            word = "@user"
+        elif word.startswith("http"):
+            word = "http"
+
+        words.append(word)
+
+    return " ".join(words)
+
+def analyze_sentiments(tweets):
+    valid_tweets = []
+    texts = []
+
+    for tweet in tweets:
+        text = (tweet.get("text") or "").strip()
+
+        if text:
+            valid_tweets.append(tweet)
+            texts.append(preprocess_tweet(text))
+
+    if not texts:
+        return tweets
+
+    results = sentiment_model(
+        texts,
+        truncation=True,
+        max_length=512,
+        batch_size=8
+    )
+
+    for tweet, result in zip(valid_tweets, results):
+        tweet["label"] = result["label"].lower()
+        tweet["score"] = float(result["score"])
+
+    return tweets
  
  
 X_BASE = "https://api.twitter.com/2"
