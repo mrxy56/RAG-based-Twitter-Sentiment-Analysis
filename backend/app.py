@@ -23,11 +23,32 @@ from rank_bm25 import BM25Okapi
 load_dotenv()
  
 X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "").strip()
-IBM_NLU_APIKEY = os.getenv("IBM_NLU_APIKEY", "").strip()
-IBM_NLU_URL = os.getenv("IBM_NLU_URL", "").strip()
-IBM_NLU_VERSION = os.getenv("IBM_NLU_VERSION", "2022-04-07").strip()
  
 app = Flask(__name__)
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+sentiment_model = pipeline(
+    task="sentiment-analysis",
+    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+    tokenizer="cardiffnlp/twitter-roberta-base-sentiment-latest",
+    device=0 if DEVICE == "cuda" else -1
+)
+
+embedding_model = SentenceTransformer(
+    "sentence-transformers/all-MiniLM-L6-v2",
+    device=DEVICE
+)
+
+chroma_client = chromadb.Client()
+
+qa_generator = pipeline(
+    task="text2text-generation",
+    model="google/flan-t5-small",
+    device=0 if DEVICE == "cuda" else -1
+)
+
+print("Running models on:", DEVICE)
  
 def ensure_nltk():
     try:
@@ -62,32 +83,7 @@ def tokens_from_text(s):
     toks = word_tokenize(s)
     return [t for t in toks if t.isalpha() and t not in EN_STOP and len(t) > 2]
  
-
-def make_nlu():
-    if not IBM_NLU_APIKEY or not IBM_NLU_URL:
-        raise RuntimeError("Missing IBM_NLU_APIKEY / IBM_NLU_URL in backend/.env")
-    authenticator = IAMAuthenticator(IBM_NLU_APIKEY)
-    nlu = NaturalLanguageUnderstandingV1(version=IBM_NLU_VERSION, authenticator=authenticator)
-    nlu.set_service_url(IBM_NLU_URL)
-    return nlu
  
-NLU = make_nlu()
-
-def watson_sentiment(text):
-    global NLU
- 
-    resp = NLU.analyze(
-        text=text,
-        features=Features(sentiment=SentimentOptions())
-    ).get_result()
- 
-    doc = (resp.get("sentiment", {}) or {}).get("document", {}) or {}
-    return {
-        "label": doc.get("label", "neutral"),
-        "score": float(doc.get("score", 0.0)),
-    }
- 
-
 X_BASE = "https://api.twitter.com/2"
  
 def x_search_recent(query, max_results=10, lang="en"):
