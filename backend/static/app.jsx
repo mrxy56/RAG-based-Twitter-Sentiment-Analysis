@@ -33,6 +33,10 @@ function App() {
   const [error, setError] = useState("");
   const [data, setData] = useState(null);
   const [evalRes, setEvalRes] = useState(null);
+
+  const [question, setQuestion] = useState("");
+  const [qaLoading, setQaLoading] = useState(false);
+  const [qaResult, setQaResult] = useState(null);
  
   async function onAnalyze(e) {
     e.preventDefault();
@@ -40,6 +44,7 @@ function App() {
     setError("");
     setData(null);
     setEvalRes(null);
+    setQaResult(null);
  
     try {
       const res = await fetch("/api/analyze", {
@@ -78,6 +83,47 @@ function App() {
       alert(err.message || "Evaluate failed");
     }
   }
+
+  async function onAsk() {
+  if (!question.trim()) {
+    alert("Please enter a question.");
+    return;
+  }
+
+  if (!data || !data.items || data.items.length === 0) {
+    alert("Run Analyze first.");
+    return;
+  }
+
+  setQaLoading(true);
+  setQaResult(null);
+
+  try {
+    const res = await fetch("/api/qa", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        question,
+        tweets: data.items
+      })
+    });
+
+    const json = await res.json();
+
+    if (!res.ok) {
+      throw new Error(json.error || "QA failed");
+    }
+
+    setQaResult(json);
+
+  } catch (err) {
+    alert(err.message || "QA failed");
+  } finally {
+    setQaLoading(false);
+  }
+}
  
   return (
     <div className="container py-4">
@@ -156,6 +202,56 @@ function App() {
                   ))}
                 </div>
               </div>
+
+              <div className="mt-4">
+                <h5>RAG Question Answering</h5>
+        
+                <div className="input-group">
+                  <input
+                    className="form-control"
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    placeholder="Ask a question about the retrieved tweets"
+                  />
+
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={onAsk}
+                  disabled={qaLoading}
+                >
+                  {qaLoading ? "Answering..." : "Ask"}
+                </button>
+              </div>
+
+              {qaResult && (
+                <div className="alert alert-light border mt-3">
+                  <strong>Answer</strong>
+
+                  <div className="mt-2">
+                    {qaResult.answer}
+                  </div>
+
+                  <strong className="d-block mt-3">
+                    Retrieved Tweets
+                  </strong>
+
+                  {(qaResult.sources || []).map((source, index) => (
+                    <div
+                      key={index}
+                      className="border rounded p-2 mt-2 bg-white"
+                    >
+                      <small className="text-muted">
+                          Similarity:{" "}
+                          {Number(source.similarity).toFixed(3)}
+                      </small>
+
+                      <div>{source.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
  
               <div className="mt-4">
                 <div className="d-flex flex-wrap align-items-center justify-content-between gap-2">
