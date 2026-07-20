@@ -18,8 +18,6 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 
-
- 
 load_dotenv()
  
 X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "").strip()
@@ -452,4 +450,4 @@ Answer:
         }), 500
  
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=True)
